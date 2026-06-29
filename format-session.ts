@@ -1,75 +1,112 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 
-const POINTER = `${process.env.HOME}/.claude/cc-edit-diff/current-session`;
+const SESSIONS_DIR = `${process.env.HOME}/.claude/cc-edit-diff/sessions`;
 
-if (!fs.existsSync(POINTER)) {
-  console.log("No edits recorded yet.");
-  process.exit(0);
+let sessionFile: string | null = null;
+
+// Try to use explicit session ID if provided
+const sessionId = process.argv[2];
+if (sessionId) {
+  const candidateFile = `${SESSIONS_DIR}/${sessionId}.jsonl`;
+  if (fs.existsSync(candidateFile) && fs.statSync(candidateFile).size > 0) {
+    sessionFile = candidateFile;
+  }
+} else {
+  // Find the most recent session
+  if (fs.existsSync(SESSIONS_DIR)) {
+    const files = fs
+      .readdirSync(SESSIONS_DIR)
+      .filter((f) => f.endsWith(".jsonl"))
+      .map((f) => ({ name: f, path: `${SESSIONS_DIR}/${f}`, time: fs.statSync(`${SESSIONS_DIR}/${f}`).mtime.getTime() }))
+      .sort((a, b) => b.time - a.time);
+
+    if (files.length > 0 && fs.statSync(files[0].path).size > 0) {
+      sessionFile = files[0].path;
+    }
+  }
 }
 
-const sessionFile = fs.readFileSync(POINTER, "utf-8").trim();
-
-if (!fs.existsSync(sessionFile)) {
-  console.log("No edits recorded yet.");
+if (!sessionFile) {
+  console.log("[edit-diff] No edits recorded yet.");
   process.exit(0);
 }
 
 const lines = fs.readFileSync(sessionFile, "utf-8").split("\n").filter(Boolean);
+if (!lines.length) {
+  console.log("[edit-diff] No edits recorded yet.");
+  process.exit(0);
+}
 
-type Edit = { file: string; line?: number | undefined };
-const edits: Edit[] = [];
+type Hunk = { line: number | undefined; removed: string; added: string };
+const blocks = new Map<string, Hunk[]>();
 
 for (const line of lines) {
   try {
     const raw = JSON.parse(line) as Record<string, unknown>;
+    const toolName = raw.tool_name as string;
+    if (toolName !== "Edit" && toolName !== "Write" && toolName !== "MultiEdit") continue;
 
-    const toolName = raw.tool_name as string | undefined;
-    if (toolName === "Edit" || toolName === "Write" || toolName === "MultiEdit") {
-      const input = raw.tool_input as Record<string, unknown> | undefined;
-      const file = input?.file_path as string | undefined;
-      if (!file) continue;
+    const input = raw.tool_input as Record<string, unknown> | undefined;
+    if (!input) continue;
 
-      let lineNum: number | undefined;
+    if (toolName === "MultiEdit") {
+      const ops = input.operations as Array<Record<string, unknown>> | undefined;
+      if (ops) for (const op of ops) {
+        const f = (op.file_path as string || "").trim();
+        if (f && !blocks.has(f)) blocks.set(f, []);
+      }
+      continue;
+    }
 
-      // For Edit, find line number from old_string
-      if (toolName === "Edit" && typeof input?.old_string === "string" && input.old_string) {
+    const file = (input.file_path as string || "").trim();
+    if (!file) continue;
+    if (!blocks.has(file)) blocks.set(file, []);
+
+    let lineNum: number | undefined;
+    let removed = "";
+    let added = "";
+
+    if (toolName === "Edit") {
+      const oldStr = input.old_string as string | undefined;
+      const newStr = input.new_string as string | undefined;
+      if (oldStr) {
+        removed = oldStr;
         try {
           const content = fs.readFileSync(file, "utf-8");
-          const firstLine = (input.old_string as string).split("\n")[0];
+          const firstLine = oldStr.split("\n")[0];
           if (firstLine) {
             const idx = content.indexOf(firstLine);
-            if (idx !== -1) {
-              lineNum = content.substring(0, idx).split("\n").length;
-            }
+            if (idx !== -1) lineNum = content.substring(0, idx).split("\n").length;
           }
-        } catch {
-          // file might not exist yet (Write), skip
-        }
+        } catch {}
       }
-
-      edits.push({ file, line: lineNum });
+      if (newStr) added = newStr;
+    } else if (toolName === "Write") {
+      added = (input.content as string) ?? "";
     }
-  } catch {
-    // skip invalid lines
-  }
+
+    blocks.get(file)!.push({ line: lineNum, removed, added });
+  } catch {}
 }
 
-if (!edits.length) {
-  console.log("No edits recorded yet.");
+if (!blocks.size) {
+  console.log("[edit-diff] No edits recorded yet.");
   process.exit(0);
 }
 
-// Deduplicate files, keep latest line per file
-const fileMap = new Map<string, number | undefined>();
-for (const edit of edits) {
-  fileMap.set(edit.file, edit.line ?? fileMap.get(edit.file));
-}
+console.log("[edit-diff]");
 
-// Output formatted markdown with terminal hyperlinks
-for (const [file, line] of fileMap) {
-  const display = line ? `${file}:${line}` : file;
-  const target = line ? `${file}:${line}` : file;
-  // OSC 8 hyperlink: \e]8;;URI\e\\TEXT\e]8;;\e\\
-  console.log(`\x1b]8;;file://${target}\x1b\\${display}\x1b]8;;\x1b\\`);
+for (const [file, hunks] of blocks) {
+  const line = hunks.find((h) => h.line)?.line;
+  console.log(line ? `${file}:${line}` : file);
+
+  for (const hunk of hunks) {
+    for (const l of hunk.removed.split("\n")) {
+      if (l) console.log(`- ${l}`);
+    }
+    for (const l of hunk.added.split("\n")) {
+      if (l) console.log(`+ ${l}`);
+    }
+  }
+  console.log("");
 }

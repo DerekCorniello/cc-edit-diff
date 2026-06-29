@@ -69,4 +69,8 @@ EOF
 fi
 
 echo ""
-echo "Done. Restart Claude Code, then type /edit-diff to see your recent edits."
+echo "Done! Restart Claude Code for changes to take effect."
+echo ""
+echo "Usage:"
+echo "  - After editing files, you'll see immediate feedback with clickable file links"
+echo "  - Type /edit-diff to see a summary of all edits in the current session"
