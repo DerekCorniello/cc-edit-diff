@@ -1,0 +1,31 @@
+{
+  "name": "cc-edit-diff",
+  "version": "1.0.0",
+  "description": "A Claude Code Plugin that allows for quick editing of edits the agent makes.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "bin": {
+    "cc-edit-diff": "cli/index.ts"
+  },
+  "repository": {
+    "type": "module",
+    "url": "git+https://github.com/DerekCorniello/cc-edit-diff.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/DerekCorniello/cc-edit-diff/issues"
+  },
+  "homepage": "https://github.com/DerekCorniello/cc-edit-diff#readme",
+  "dependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1"
+  }
+}
